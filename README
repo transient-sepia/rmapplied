@@ -1,0 +1,16 @@
+        rmapplied - maintain removal of applied archivelogs for a standby database.
+
+        rmapplied.sh [-h] -s <ORACLE_SID>
+
+        -h - print this message
+        -s - database name
+
+        Notes:
+
+        - script logs can be found in '/u01/log/oracle' directory upon completion.
+
+        Example:
+
+        - remove archivelogs for database orcl:
+
+          rmapplied.sh -s orcl
