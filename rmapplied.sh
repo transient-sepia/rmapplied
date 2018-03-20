@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # rmapplied-chan
-# version 1.0
+# version 1.1
 #
 # / what's the rush? /
 #
@@ -67,6 +67,18 @@ function setora () {
   fi
 }
 
+function getmode () {
+  DBMODE=$(printf "
+    set head off verify off trimspool on feed off line 2000 pagesize 100 newpage none
+    set numformat 9999999999999999999
+    set pages 0
+    select open_mode||'|'||database_role from v\$database;
+    exit
+    " | sqlplus -s / as sysdba)
+  STATUS=$(echo $DBMODE | cut -d\| -f1)
+  ROLE=$(echo $DBMODE | cut -d\| -f2)
+}
+
 # os dependent
 case $(uname) in
   "SunOS") ORATAB=/var/opt/oracle/oratab
@@ -91,7 +103,7 @@ if [[ ! -d ${LOGDIR} ]]; then
     exit 1
   fi
 fi
-LOG=/u01/log/oracle/rmapplied_$(date +%Y.%m.%d.%H.%M).log
+LOG=/u01/log/oracle/rmapplied_${SID}_$(date +%Y.%m.%d.%H.%M).log
 
 # var check
 if [[ -z ${SID} ]]; then
@@ -101,32 +113,12 @@ fi
 
 # start
 setora ${SID}
-ERRMSG="Cannot get database status."
-STATUS=$(printf "
-  set head off verify off trimspool on feed off line 2000 pagesize 100 newpage none
-  set numformat 9999999999999999999
-  set pages 0
-  select status from v\$instance;
-  exit
-  " | sqlplus -s / as sysdba | grep .)
-check
-if [[ ${STATUS} != "MOUNTED" ]]; then
-  ERRMSG="Database ${SID} should be in MOUNTED state. Current status: ${STATUS}."
+getmode
+if [[ ${ROLE} != "PHYSICAL STANDBY" ]]; then
+  ERRMSG="Database ${SID} is not a physical standby database. Current role: ${ROLE}."
   errck
 else
-  ERRMSG="Cannot check database role."
-  ROLE=$(printf "
-    set head off verify off trimspool on feed off line 2000 pagesize 100 newpage none
-    set numformat 9999999999999999999
-    set pages 0
-    select database_role from v\$database;
-    exit
-    " | sqlplus -s / as sysdba | grep .)
-  check
-  if [[ ${ROLE} != "PHYSICAL STANDBY" ]]; then
-    ERRMSG="Database ${SID} is not a standby database. Current role: ${ROLE}."
-    errck
-  else
+  if [[ ${STATUS} = "MOUNTED" ]] || [[ ${STATUS} = "READ ONLY WITH APPLY" ]]; then
     ERRMSG="Cannot fetch sequence number."
     SEQ=$(printf "
       set head off verify off trimspool on feed off line 2000
@@ -143,12 +135,15 @@ crosscheck archivelog all;
 delete noprompt archivelog until sequence ${SEQ};
 EOF
     check
+  else
+    ERRMSG="Database ${SID} shouldn't be in ${STATUS} state. Accepted states: MOUNTED, READ ONLY WITH APPLY."
+    errck
   fi
 fi
 
 # remove old logfiles
 ERRMSG="Cannot remove old logfiles."
-find ${LOG%/*} -name "rmapplied*" -mtime +3 -exec rm -f {} \; >> ${LOG} 2>&1
+find ${LOG%/*} -name "rmapplied_${SID}*" -mtime +3 -exec rm -f {} \; >> ${LOG} 2>&1
 check
 
 # exit
